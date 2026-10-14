@@ -179,7 +179,7 @@ dialog .row button:not(.cta){padding:12px 20px}
       <div class="group" id="fType" role="group" aria-label="Media"></div>
       <div class="count" id="count"></div>
     </div>
-    <div class="bar" id="bar" hidden><button class="cta" id="add">Tambah kenangan</button><span>Mode kelola aktif. Gunakan tombol Ubah atau Hapus di setiap foto.</span></div>
+    <div class="bar" id="bar" hidden><button class="cta" id="add">Tambah kenangan</button><button class="chip" id="logout">Keluar</button><span>Mode kelola aktif. Gunakan tombol Ubah atau Hapus di setiap foto.</span></div>
     <div class="gallery" id="gallery"></div>
   </section>
 
@@ -196,7 +196,7 @@ dialog .row button:not(.cta){padding:12px 20px}
     <p>Setiap kenangan di sini dulunya hanya hari biasa. Kami baru tahu artinya setelah lewat.</p>
   </section>
 </main>
-<footer><span>Rumah Kenangan, disusun dengan sayang.</span><span>Tambah, ubah, dan hapus kenangan lewat tombol Kelola.</span></footer>
+<footer><span>Rumah Kenangan, disusun dengan sayang.</span><span id="status">Memeriksa koneksi...</span></footer>
 
 <div class="lb" id="lb" role="dialog" aria-modal="true" aria-label="Tampilan kenangan">
   <div class="lb-top"><span id="lbCount"></span><button id="lbClose">Tutup</button></div>
@@ -222,7 +222,16 @@ dialog .row button:not(.cta){padding:12px 20px}
   <label>Cerita singkat<textarea id="fStory" rows="3" maxlength="400"></textarea></label>
   <div class="row"><button type="button" id="dCancel">Batal</button><button class="cta" type="submit">Simpan</button></div>
 </form></dialog>
+<dialog id="login"><form id="lform">
+  <h2>Masuk pemilik</h2>
+  <label>Email<input type="email" id="lEmail" required autocomplete="username"></label>
+  <label>Kata sandi<input type="password" id="lPass" required autocomplete="current-password"></label>
+  <p id="lErr" style="color:#8a2f1d;font-size:.85rem;min-height:1.2em"></p>
+  <div class="row"><button type="button" id="lCancel">Batal</button><button class="cta" type="submit">Masuk</button></div>
+</form></dialog>
 <div class="toast" id="toast" role="status"></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js"></script>
+<script>window.supabase||document.write('<script src="https://unpkg.com/@supabase/supabase-js@2.117.2/dist/umd/supabase.js"><\/script>')</script>
 <script>
 /* ============ DATA — ganti URL, judul, dan cerita sesuai milik Anda ============
    size: '' (normal) | 't' (tinggi) | 'w' (lebar) | 'f' (fitur besar)
@@ -283,7 +292,7 @@ function renderGallery(){
   if(!items.length){g.innerHTML='<p class="empty">Belum ada kenangan untuk kombinasi ini. Ubah filter untuk melihat yang lain.</p>';return}
   g.innerHTML=items.map((m,i)=>`
    <article class="tile ${m.size}" tabindex="0" role="button" data-i="${i}" aria-label="${m.title}" style="transition-delay:${Math.min(i,6)*50}ms">
-     ${m.blob&&m.type==='video'?`<video src="${mu(m)}#t=0.5" muted playsinline preload="metadata"></video>`:`<img src="${pic(m,m.size==='f'?1400:800)}" alt="${m.title}, ${m.place}" loading="lazy" onerror="this.style.opacity=0">`}
+     ${m.url&&m.type==='video'?`<video src="${mu(m)}#t=0.5" muted playsinline preload="metadata"></video>`:`<img src="${pic(m,m.size==='f'?1400:800)}" alt="${m.title}, ${m.place}" loading="lazy" onerror="this.style.opacity=0">`}
      <div class="mg"><button data-a="edit">Ubah</button><button data-a="del">Hapus</button></div>
      ${m.type==='video'?'<span class="play" aria-label="Video"></span>':''}
      <div class="cap"><h3>${m.title}</h3><small>${fmt(m.date)}, ${m.place}</small></div>
@@ -324,8 +333,8 @@ function closeLB(){lb.classList.remove('open');document.body.style.overflow='';$
 function show(first){
   const m=cl[cur],md=$('#media');
   const paint=()=>{
-    md.innerHTML=m.type==='video'&&(m.src||m.blob)
-      ?`<video src="${mu(m)||m.src}" ${m.blob?'':`poster="${U(m.img,1400)}"`} controls playsinline autoplay></video>`
+    md.innerHTML=m.type==='video'&&(m.src||m.url)
+      ?`<video src="${mu(m)||m.src}" ${m.url?'':`poster="${U(m.img,1400)}"`} controls playsinline autoplay></video>`
       :`<img src="${pic(m,1600)}" alt="${m.title}">`;
     $('#lbTitle').textContent=m.title;
     $('#lbMeta').textContent=fmt(m.date)+', '+m.place+', '+m.moment+(m.type==='video'?', video':'');
@@ -371,26 +380,42 @@ $('#sound').onclick=async()=>{
   $('#soundTxt').textContent=playing?'Musik hidup':'Musik mati';
 };
 
-/* ============ KELOLA: tambah, ubah, hapus (disimpan di browser ini) ============ */
-const DB={db:null,
- open(){return new Promise((res,rej)=>{const r=indexedDB.open('rumah-kenangan',1);r.onupgradeneeded=()=>r.result.createObjectStore('mem',{keyPath:'id'});r.onsuccess=()=>{this.db=r.result;res()};r.onerror=()=>rej(r.error)})},
- tx(mode,fn){return new Promise((res,rej)=>{const t=this.db.transaction('mem',mode),q=fn(t.objectStore('mem'));t.oncomplete=()=>res(q&&q.result);t.onerror=()=>rej(t.error);t.onabort=()=>rej(t.error)})},
- all(){return this.tx('readonly',s=>s.getAll())},
- put(v){return this.tx('readwrite',s=>s.put(v))},
- del(id){return this.tx('readwrite',s=>s.delete(id))}};
-const urls=new Map();
-function mu(m){if(!m.blob)return null;if(!urls.has(m.id))urls.set(m.id,URL.createObjectURL(m.blob));return urls.get(m.id)}
-const pic=(m,w)=>mu(m)||U(m.img,w);
-const hidGet=()=>{try{return JSON.parse(localStorage.getItem('hidden')||'[]')}catch(e){return[]}};
-const hidSet=a=>{try{localStorage.setItem('hidden',JSON.stringify(a))}catch(e){}};
-function toast(t){const e=$('#toast');e.textContent=t;e.classList.add('show');setTimeout(()=>e.classList.remove('show'),2200)}
+/* ============ SUPABASE: data tersimpan online, tampil untuk semua pengunjung ============ */
+const SB_URL='https://zrqxhykeruqyqdmpvazo.supabase.co';   // isi: Project URL, contoh https://abcdxyz.supabase.co
+const SB_KEY='sb_publishable_CmWrLH308Nc8GjM8r9i_NA_uCOrYMah';   // isi: anon / publishable key
+const BUCKET='kenangan';
+let sb=null,sbWhy=!window.supabase?'pustaka Supabase gagal dimuat':'';
+try{if(SB_URL&&SB_KEY&&window.supabase)sb=supabase.createClient(SB_URL,SB_KEY)}catch(e){sbWhy='kunci ditolak: '+e.message}
+const setStatus=t=>{$('#status').textContent=t};
+const mu=m=>m.url||null;
+const pic=(m,w)=>m.url||U(m.img,w);
+let isOwner=false;
+function toast(t,ms=2400){const e=$('#toast');e.textContent=t;e.classList.add('show');setTimeout(()=>e.classList.remove('show'),ms)}
+const pub=p=>sb.storage.from(BUCKET).getPublicUrl(p).data.publicUrl;
 async function load(){
-  let recs=[];try{if(!DB.db)await DB.open();recs=await DB.all()}catch(e){}
-  const hid=hidGet(),map=new Map(MEMORIES.filter(m=>!hid.includes(m.id)).map(m=>[m.id,m]));
-  recs.forEach(r=>map.set(r.id,r));
-  DATA=[...map.values()].sort((a,b)=>a.date.localeCompare(b.date));
+  if(!sb){DATA=[...MEMORIES];setStatus('Mode contoh: Supabase belum terhubung ('+sbWhy+')');sync();return}
+  const {data,error}=await sb.from('memories').select('*').order('date');
+  if(error){toast('Gagal memuat data: '+error.message,8000);setStatus('Gagal memuat: '+error.message);DATA=[...MEMORIES]}
+  else{setStatus('Terhubung ke Supabase, '+data.length+' kenangan tersimpan');DATA=data.map(r=>({...r,size:r.size||'',place:r.place||'',story:r.story||'',url:pub(r.path)}))}
   if(st.y&&!DATA.some(m=>yr(m)===st.y))st.y=null;
   sync();
+}
+function shrink(f){return new Promise(res=>{
+  if(!f.type.startsWith('image/')||f.type==='image/gif')return res(f);
+  const i=new Image(),u=URL.createObjectURL(f);
+  i.onload=()=>{const k=Math.min(1,2000/Math.max(i.width,i.height)),c=document.createElement('canvas');
+    c.width=Math.round(i.width*k);c.height=Math.round(i.height*k);c.getContext('2d').drawImage(i,0,0,c.width,c.height);
+    URL.revokeObjectURL(u);c.toBlob(b=>res(b||f),'image/jpeg',.85)};
+  i.onerror=()=>res(f);i.src=u})}
+async function upload(f){
+  const isV=f.type.startsWith('video/');
+  if(isV&&f.size>50*1024*1024)throw new Error('Video lebih dari 50 MB. Kecilkan dulu.');
+  const b=isV?f:await shrink(f);
+  const ext=b===f?(f.name.split('.').pop()||'bin').toLowerCase():'jpg';
+  const path=Date.now()+'-'+Math.random().toString(36).slice(2,7)+'.'+ext;
+  const {error}=await sb.storage.from(BUCKET).upload(path,b,{contentType:b.type||f.type,cacheControl:'31536000'});
+  if(error)throw error;
+  return {path,type:isV?'video':'foto'};
 }
 const dlg=$('#dlg');let editing=null;
 function openForm(m){
@@ -403,30 +428,48 @@ function openForm(m){
 }
 $('#dCancel').onclick=()=>dlg.close();
 $('#frm').onsubmit=async e=>{
-  e.preventDefault();
-  const f=$('#fFile').files[0];
-  const rec={id:editing?editing.id:Date.now(),title:$('#fTitle').value.trim(),date:$('#fDate').value,place:$('#fPlace').value.trim(),
-    moment:$('#fMoment').value,size:$('#fSize').value,story:$('#fStory').value.trim(),
-    type:editing?editing.type:'foto',img:editing?editing.img:'',blob:editing?editing.blob:null,src:editing?editing.src:''};
-  if(f){rec.blob=f;rec.type=f.type.startsWith('video')?'video':'foto'}
-  try{if(!DB.db)await DB.open();await DB.put(rec)}catch(err){toast('Gagal menyimpan. Coba file yang lebih kecil.');return}
-  if(urls.has(rec.id)){URL.revokeObjectURL(urls.get(rec.id));urls.delete(rec.id)}
-  dlg.close();await load();toast(editing?'Perubahan disimpan':'Kenangan ditambahkan');
+  e.preventDefault();if(!sb||!isOwner)return;
+  const btn=$('#frm [type=submit]');btn.disabled=true;btn.textContent='Menyimpan...';
+  try{
+    const f=$('#fFile').files[0];
+    const row={title:$('#fTitle').value.trim(),date:$('#fDate').value,place:$('#fPlace').value.trim(),moment:$('#fMoment').value,size:$('#fSize').value,story:$('#fStory').value.trim()};
+    let old=null;
+    if(f){const u=await upload(f);row.path=u.path;row.type=u.type;if(editing)old=editing.path}
+    const q=editing?sb.from('memories').update(row).eq('id',editing.id):sb.from('memories').insert(row);
+    const {error}=await q;if(error)throw error;
+    if(old)await sb.storage.from(BUCKET).remove([old]);
+    const was=!!editing;dlg.close();await load();toast(was?'Perubahan disimpan':'Kenangan ditambahkan');
+  }catch(err){toast('Gagal menyimpan: '+(err.message||err),7000)}
+  finally{btn.disabled=false;btn.textContent='Simpan'}
 };
 async function delMem(m){
+  if(!m.path){toast('Foto contoh tidak bisa dihapus.');return}
   if(!confirm('Hapus "'+m.title+'"? Tindakan ini tidak bisa dibatalkan.'))return;
-  try{if(!DB.db)await DB.open();await DB.del(m.id)}catch(e){}
-  if(MEMORIES.some(x=>x.id===m.id))hidSet([...new Set([...hidGet(),m.id])]);
+  const {error}=await sb.from('memories').delete().eq('id',m.id);
+  if(error){toast('Gagal menghapus: '+error.message,6000);return}
+  await sb.storage.from(BUCKET).remove([m.path]);
   await load();toast('Kenangan dihapus');
 }
-$('#add').onclick=()=>openForm();
-$('#manage').onclick=()=>{
-  const on=document.body.classList.toggle('manage');
-  $('#bar').hidden=!on;$('#manage').setAttribute('aria-pressed',on);
-  $('#manage').textContent=on?'Selesai':'Kelola';
+function setManage(on){
+  document.body.classList.toggle('manage',on);$('#bar').hidden=!on;
+  $('#manage').setAttribute('aria-pressed',on);$('#manage').textContent=on?'Selesai':'Kelola';
   if(on)$('#galeri').scrollIntoView({behavior:'smooth'});
+}
+$('#manage').onclick=()=>{
+  if(!sb){alert('Supabase belum terhubung: '+(sbWhy||'URL atau kunci kosong')+'. Lihat tulisan status di bagian paling bawah halaman.');return}
+  if(document.body.classList.contains('manage'))return setManage(false);
+  isOwner?setManage(true):$('#login').showModal();
 };
-load();
+$('#add').onclick=()=>openForm();
+$('#lCancel').onclick=()=>$('#login').close();
+$('#lform').onsubmit=async e=>{
+  e.preventDefault();
+  const {error}=await sb.auth.signInWithPassword({email:$('#lEmail').value.trim(),password:$('#lPass').value});
+  if(error){$('#lErr').textContent='Email atau kata sandi salah.';return}
+  isOwner=true;$('#lErr').textContent='';$('#lPass').value='';$('#login').close();setManage(true);
+};
+$('#logout').onclick=async()=>{await sb.auth.signOut();isOwner=false;setManage(false);toast('Anda sudah keluar')};
+(async()=>{if(sb){const {data}=await sb.auth.getSession();isOwner=!!data.session}load()})();
 </script>
 </body>
 </html>
